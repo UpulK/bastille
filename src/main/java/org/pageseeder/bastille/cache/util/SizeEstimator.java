@@ -15,10 +15,18 @@
  */
 package org.pageseeder.bastille.cache.util;
 
+import java.lang.reflect.Array;
+import java.lang.reflect.Field;
+import java.lang.reflect.InaccessibleObjectException;
+import java.lang.reflect.Modifier;
+import java.util.Collection;
+import java.util.IdentityHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 import net.sf.ehcache.Ehcache;
+import net.sf.ehcache.Element;
 
 /**
  * A simple class to estimate the size of a cache based on previously calculated sized
@@ -72,13 +80,118 @@ public final class SizeEstimator {
     Sample sample = this.inMemorySamples.get(cache.getName());
     int elements = cache.getSize();
     if (sample == null || sample.elements() * RESAMPLE_FACTOR < elements || sample._bytesize == 0) {
-      long bytesize = elements > 0? cache.calculateInMemorySize() : 0;
+      long bytesize = elements > 0? calculateInMemorySize(cache) : 0;
       sample = new Sample(elements, bytesize);
       this.inMemorySamples.put(cache.getName(), sample);
       return elements > 0;
     }
     return false;
   }
+  
+    
+  public long calculateInMemorySize(Ehcache cache) {
+	    long size = 0;
+	    IdentityHashMap<Object, Boolean> visited = new IdentityHashMap<>();
+	    List keys = cache.getKeys();
+	    int depth = 0; // Initialize depth
+
+	    for (Object key : keys) {
+	        Element element = cache.get(key);
+	        if (element != null) {
+	            Object value = element.getObjectValue();
+	            // Increment depth for each recursive call
+	            size += estimateSizeOfCache(value, visited, depth + 1);
+	        }
+	    }
+
+	    return size;
+	}
+  
+  
+  
+	/**
+	 * Estimates the size of an object in memory, including objects reachable from it, up to a certain depth.
+	 * This method recursively traverses objects, collections, maps, and arrays to estimate their total memory footprint.
+	 * It uses a set of visited objects to avoid infinite recursion and limits the depth of traversal to prevent stack overflow.
+	 * 
+	 * @param object The object to estimate the size of. Can be any Java object, collection, map, or array.
+	 * @param visited A set of system identity hash codes of already visited objects to avoid revisiting them.
+	 * @param depth The current depth of the recursion. The method stops recursion when depth exceeds 20.
+	 * @return The estimated size of the object in bytes. This is a rough estimate and not an exact measurement.
+	 */
+  private long estimateSizeOfCache(Object object, IdentityHashMap<Object, Boolean> visited, int depth) {
+	  if (object == null || visited.containsKey(object) || depth > 20) {
+		  return 0;
+	  }
+	  visited.put(object, Boolean.TRUE);
+	  long size = 0;
+	  Class<?> objClass = object.getClass();
+
+	  // Accurately estimate size for primitive types
+	  if (objClass.isPrimitive()) {
+		  size = getSizeOfPrimitiveType(objClass);
+	  } else if (object instanceof String) {
+		  size = ((String) object).length() * Character.BYTES;
+	  } else if (object instanceof Collection) {
+		  Collection<?> collection = (Collection<?>) object;
+		  for (Object item : collection) {
+			  size += estimateSizeOfCache(item, visited, depth + 1);
+		  }
+	  } else if (object instanceof Map) {
+		  Map<?, ?> map = (Map<?, ?>) object;
+		  for (Map.Entry<?, ?> entry : map.entrySet()) {
+			  size += estimateSizeOfCache(entry.getKey(), visited, depth + 1) + estimateSizeOfCache(entry.getValue(), visited, depth + 1);
+		  }
+	  } else if (objClass.isArray()) {
+		  int length = Array.getLength(object);
+		  for (int i = 0; i < length; i++) {
+			  size += estimateSizeOfCache(Array.get(object, i), visited, depth + 1);
+		  }
+	  } else {
+		  // Estimate size for unknown types by inspecting their fields
+		  while (objClass != null && objClass != Object.class) {
+			  Field[] fields = objClass.getDeclaredFields();
+			  for (Field field : fields) {
+				  if (!Modifier.isStatic(field.getModifiers()) && !Modifier.isTransient(field.getModifiers())) {
+					  boolean accessible = field.isAccessible();
+					  try {
+						  field.setAccessible(true);
+						  Object fieldValue = field.get(object);
+						  size += estimateSizeOfCache(fieldValue, visited, depth + 1);
+					  } catch (IllegalAccessException e) {
+
+						  size += 50;// Assume a default size for inaccessible fields
+					  }catch (InaccessibleObjectException e) {
+
+						  size += 50; // Assume a default size for inaccessible fields
+
+					  } finally {
+						  field.setAccessible(accessible);
+					  }
+				  }
+			  }
+			  objClass = objClass.getSuperclass();
+		  }
+	  }
+	  return size;
+  }
+
+	/**
+	 * Returns the size of a primitive type.
+	 * @param type The class representing the primitive type.
+	 * @return The size in bytes of the primitive type.
+	 */
+	private long getSizeOfPrimitiveType(Class<?> type) {
+	    if (type == boolean.class) return 1;
+	    if (type == byte.class) return 1;
+	    if (type == char.class) return Character.BYTES;
+	    if (type == short.class) return Short.BYTES;
+	    if (type == int.class) return Integer.BYTES;
+	    if (type == float.class) return Float.BYTES;
+	    if (type == long.class) return Long.BYTES;
+	    if (type == double.class) return Double.BYTES;
+	    return 0; // void and other non-primitive types
+	}
 
   /**
    * Check whether a new "on disk" size sample need to be re-calculated.
