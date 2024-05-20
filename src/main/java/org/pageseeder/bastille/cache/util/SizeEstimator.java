@@ -89,24 +89,34 @@ public final class SizeEstimator {
   }
   
     
+  /**
+   * Calculates the total memory size of all elements in the cache.
+   * This method uses a recursive approach to traverse objects, collections, maps, and arrays 
+   * to estimate their total memory footprint.
+   *
+   * @param cache The cache to calculate the size of.
+   * @return The estimated size of the cache in bytes.
+   */
   public long calculateInMemorySize(Ehcache cache) {
-	    long size = 0;
-	    IdentityHashMap<Object, Boolean> visited = new IdentityHashMap<>();
-	    List keys = cache.getKeys();
-	    int depth = 0; // Initialize depth
+      long size = 0;
+      // IdentityHashMap to keep track of visited objects to avoid infinite recursion
+      IdentityHashMap<Object, Boolean> visited = new IdentityHashMap<>();
+      // Get all keys from the cache
+      List keys = cache.getKeys();
+      // Initialize depth for recursive calls
+      int depth = 0; 
 
-	    for (Object key : keys) {
-	        Element element = cache.get(key);
-	        if (element != null) {
-	            Object value = element.getObjectValue();
-	            // Increment depth for each recursive call
-	            size += estimateSizeOfCache(value, visited, depth + 1);
-	        }
-	    }
+      for (Object key : keys) {
+          Element element = cache.get(key);
+          if (element!= null) {
+              Object value = element.getObjectValue();
+              // Increment depth for each recursive call
+              size += estimateSizeOfCache(value, visited, depth + 1);
+          }
+      }
 
-	    return size;
-	}
-  
+      return size;
+  }
   
   
 	/**
