@@ -50,3 +50,9 @@ dependencies {
 test {
   useJUnitPlatform()
 }
+
+task publishToMavenLocalCustom(dependsOn: ['publishToMavenLocal']) {
+    group = 'publishing'
+    description = 'Publishes all artifacts to the local Maven repository'
+}
+
